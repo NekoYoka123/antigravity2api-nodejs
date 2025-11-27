@@ -17,6 +17,53 @@ if (config.useNativeFetch !== true) {
   useNativeFetch = true;
 }
 
+function processStreamLine(line, state, callback) {
+  if (!line.startsWith('data: ')) return;
+  
+  try {
+    const data = JSON.parse(line.slice(6));
+    const parts = data.response?.candidates?.[0]?.content?.parts;
+    
+    if (parts) {
+      for (const part of parts) {
+        if (part.thought === true) {
+          if (!state.thinkingStarted) {
+            callback({ type: 'thinking', content: '<think>\n' });
+            state.thinkingStarted = true;
+          }
+          callback({ type: 'thinking', content: part.text || '' });
+        } else if (part.text !== undefined) {
+          if (state.thinkingStarted) {
+            callback({ type: 'thinking', content: '\n</think>\n' });
+            state.thinkingStarted = false;
+          }
+          callback({ type: 'text', content: part.text });
+        } else if (part.functionCall) {
+          state.toolCalls.push({
+            id: part.functionCall.id || generateToolCallId(),
+            type: 'function',
+            function: {
+              name: part.functionCall.name,
+              arguments: JSON.stringify(part.functionCall.args)
+            }
+          });
+        }
+      }
+    }
+    
+    if (data.response?.candidates?.[0]?.finishReason && state.toolCalls.length > 0) {
+      if (state.thinkingStarted) {
+        callback({ type: 'thinking', content: '\n</think>\n' });
+        state.thinkingStarted = false;
+      }
+      callback({ type: 'tool_calls', tool_calls: state.toolCalls });
+      state.toolCalls = [];
+    }
+  } catch (e) {
+    // 忽略解析错误
+  }
+}
+
 export async function generateAssistantResponse(requestBody, callback) {
   const token = await tokenManager.getToken();
   
@@ -43,8 +90,7 @@ export async function generateAssistantResponse(requestBody, callback) {
     body: JSON.stringify(requestBody)
   });
 
-  let thinkingStarted = false;
-  let toolCalls = [];
+  const state = { thinkingStarted: false, toolCalls: [] };
   let buffer = '';
   let errorBody = '';
   let statusCode = null;
@@ -53,9 +99,7 @@ export async function generateAssistantResponse(requestBody, callback) {
     streamResponse
       .onStart(({ status }) => {
         statusCode = status;
-        if (status === 403) {
-          tokenManager.disableCurrentToken(token);
-        }
+        if (status === 403) tokenManager.disableCurrentToken(token);
       })
       .onData((chunk) => {
         if (statusCode !== 200) {
@@ -67,50 +111,7 @@ export async function generateAssistantResponse(requestBody, callback) {
         const lines = buffer.split('\n');
         buffer = lines.pop();
         
-        for (const line of lines.filter(l => l.startsWith('data: '))) {
-          const jsonStr = line.slice(6);
-          try {
-            const data = JSON.parse(jsonStr);
-            const parts = data.response?.candidates?.[0]?.content?.parts;
-            if (parts) {
-              for (const part of parts) {
-                if (part.thought === true) {
-                  if (!thinkingStarted) {
-                    callback({ type: 'thinking', content: '<think>\n' });
-                    thinkingStarted = true;
-                  }
-                  callback({ type: 'thinking', content: part.text || '' });
-                } else if (part.text !== undefined) {
-                  if (thinkingStarted) {
-                    callback({ type: 'thinking', content: '\n</think>\n' });
-                    thinkingStarted = false;
-                  }
-                  callback({ type: 'text', content: part.text });
-                } else if (part.functionCall) {
-                  toolCalls.push({
-                    id: part.functionCall.id || generateToolCallId(),
-                    type: 'function',
-                    function: {
-                      name: part.functionCall.name,
-                      arguments: JSON.stringify(part.functionCall.args)
-                    }
-                  });
-                }
-              }
-            }
-            
-            if (data.response?.candidates?.[0]?.finishReason && toolCalls.length > 0) {
-              if (thinkingStarted) {
-                callback({ type: 'thinking', content: '\n</think>\n' });
-                thinkingStarted = false;
-              }
-              callback({ type: 'tool_calls', tool_calls: toolCalls });
-              toolCalls = [];
-            }
-          } catch (e) {
-            // 忽略解析错误
-          }
-        }
+        lines.forEach(line => processStreamLine(line, state, callback));
       })
       .onEnd(() => {
         if (statusCode === 403) {
@@ -164,17 +165,16 @@ async function generateWithNativeFetch(url, headers, requestBody, callback, toke
     body: JSON.stringify(requestBody)
   });
 
-  if (response.status === 403) {
-    tokenManager.disableCurrentToken(token);
-    throw new Error('该账号没有使用权限，已自动禁用');
-  }
-
   if (!response.ok) {
-    throw new Error(`API请求失败 (${response.status})`);
+    const errorBody = await response.text();
+    if (response.status === 403) {
+      tokenManager.disableCurrentToken(token);
+      throw new Error(`该账号没有使用权限，已自动禁用。错误详情: ${errorBody}`);
+    }
+    throw new Error(`API请求失败 (${response.status}): ${errorBody}`);
   }
 
-  let thinkingStarted = false;
-  let toolCalls = [];
+  const state = { thinkingStarted: false, toolCalls: [] };
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -187,51 +187,68 @@ async function generateWithNativeFetch(url, headers, requestBody, callback, toke
     const lines = buffer.split('\n');
     buffer = lines.pop();
 
-    for (const line of lines.filter(l => l.startsWith('data: '))) {
-      const jsonStr = line.slice(6);
-      try {
-        const data = JSON.parse(jsonStr);
-        const parts = data.response?.candidates?.[0]?.content?.parts;
-        if (parts) {
-          for (const part of parts) {
-            if (part.thought === true) {
-              if (!thinkingStarted) {
-                callback({ type: 'thinking', content: '<think>\n' });
-                thinkingStarted = true;
-              }
-              callback({ type: 'thinking', content: part.text || '' });
-            } else if (part.text !== undefined) {
-              if (thinkingStarted) {
-                callback({ type: 'thinking', content: '\n</think>\n' });
-                thinkingStarted = false;
-              }
-              callback({ type: 'text', content: part.text });
-            } else if (part.functionCall) {
-              toolCalls.push({
-                id: part.functionCall.id || generateToolCallId(),
-                type: 'function',
-                function: {
-                  name: part.functionCall.name,
-                  arguments: JSON.stringify(part.functionCall.args)
-                }
-              });
-            }
-          }
-        }
+    lines.forEach(line => processStreamLine(line, state, callback));
+  }
+}
 
-        if (data.response?.candidates?.[0]?.finishReason && toolCalls.length > 0) {
-          if (thinkingStarted) {
-            callback({ type: 'thinking', content: '\n</think>\n' });
-            thinkingStarted = false;
-          }
-          callback({ type: 'tool_calls', tool_calls: toolCalls });
-          toolCalls = [];
+export async function generateAssistantResponseNoStream(requestBody) {
+  const token = await tokenManager.getToken();
+  
+  if (!token) {
+    throw new Error('没有可用的token，请运行 npm run login 获取token');
+  }
+  
+  const response = await fetch(config.api.noStreamUrl, {
+    method: 'POST',
+    headers: {
+      'Host': config.api.host,
+      'User-Agent': config.api.userAgent,
+      'Authorization': `Bearer ${token.access_token}`,
+      'Content-Type': 'application/json',
+      'Accept-Encoding': 'gzip'
+    },
+    body: JSON.stringify(requestBody)
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    if (response.status === 403) {
+      tokenManager.disableCurrentToken(token);
+      throw new Error(`该账号没有使用权限，已自动禁用。错误详情: ${errorBody}`);
+    }
+    throw new Error(`API请求失败 (${response.status}): ${errorBody}`);
+  }
+
+  const data = await response.json();
+  //console.log(JSON.stringify(data,null,2))
+  const parts = data.response?.candidates?.[0]?.content?.parts || [];
+  
+  let content = '';
+  let thinkingContent = '';
+  const toolCalls = [];
+  
+  for (const part of parts) {
+    if (part.thought === true) {
+      thinkingContent += part.text || '';
+    } else if (part.text !== undefined) {
+      content += part.text;
+    } else if (part.functionCall) {
+      toolCalls.push({
+        id: part.functionCall.id || generateToolCallId(),
+        type: 'function',
+        function: {
+          name: part.functionCall.name,
+          arguments: JSON.stringify(part.functionCall.args)
         }
-      } catch (e) {
-        // 忽略解析错误
-      }
+      });
     }
   }
+  
+  if (thinkingContent) {
+    content = `<think>\n${thinkingContent}\n</think>\n${content}`;
+  }
+  
+  return { content, toolCalls };
 }
 
 export function closeRequester() {

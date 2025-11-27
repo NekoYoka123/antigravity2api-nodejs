@@ -22,14 +22,14 @@ class antigravityRequester {
         const arch = os.arch();
         
         let filename;
-        if (platform === 'win32' && arch === 'x64') {
+        if (platform === 'win32') {
             filename = 'antigravity_requester_windows_amd64.exe';
-        } else if (platform === 'android' && arch === 'arm64') {
+        } else if (platform === 'android') {
             filename = 'antigravity_requester_android_arm64';
-        } else if (platform === 'linux' && arch === 'x64') {
+        } else if (platform === 'linux') {
             filename = 'antigravity_requester_linux_amd64';
         } else {
-            throw new Error(`Unsupported platform/architecture: ${platform}/${arch}. Only supports: windows/x64, android/arm64, linux/x64`);
+            throw new Error(`Unsupported platform: ${platform}`);
         }
         
         const binPath = this.binPath || path.join(__dirname, 'bin');
@@ -57,35 +57,45 @@ class antigravityRequester {
             this.proc.stdin.setDefaultEncoding('utf8');
         }
 
+        // 增大 stdout 缓冲区以减少背压
+        if (this.proc.stdout.setEncoding) {
+            this.proc.stdout.setEncoding('utf8');
+        }
+        
+        // 使用 setImmediate 异步处理数据,避免阻塞
         this.proc.stdout.on('data', (data) => {
             this.buffer += data.toString();
-            const lines = this.buffer.split('\n');
-            this.buffer = lines.pop();
+            
+            // 使用 setImmediate 异步处理,避免阻塞 stdout 读取
+            setImmediate(() => {
+                const lines = this.buffer.split('\n');
+                this.buffer = lines.pop();
 
-            for (const line of lines) {
-                if (!line.trim()) continue;
-                try {
-                    const response = JSON.parse(line);
-                    const pending = this.pendingRequests.get(response.id);
-                    if (!pending) continue;
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const response = JSON.parse(line);
+                        const pending = this.pendingRequests.get(response.id);
+                        if (!pending) continue;
 
-                    if (pending.streamResponse) {
-                        pending.streamResponse._handleChunk(response);
-                        if (response.type === 'end' || response.type === 'error') {
-                            this.pendingRequests.delete(response.id);
-                        }
-                    } else {
-                        this.pendingRequests.delete(response.id);
-                        if (response.ok) {
-                            pending.resolve(new antigravityResponse(response));
+                        if (pending.streamResponse) {
+                            pending.streamResponse._handleChunk(response);
+                            if (response.type === 'end' || response.type === 'error') {
+                                this.pendingRequests.delete(response.id);
+                            }
                         } else {
-                            pending.reject(new Error(response.error || 'Request failed'));
+                            this.pendingRequests.delete(response.id);
+                            if (response.ok) {
+                                pending.resolve(new antigravityResponse(response));
+                            } else {
+                                pending.reject(new Error(response.error || 'Request failed'));
+                            }
                         }
+                    } catch (e) {
+                        console.error('Failed to parse response:', e, 'Line:', line);
                     }
-                } catch (e) {
-                    console.error('Failed to parse response:', e);
                 }
-            }
+            });
         });
 
         this.proc.stderr.on('data', (data) => {
