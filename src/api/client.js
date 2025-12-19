@@ -3,8 +3,8 @@ import config from '../config/config.js';
 import AntigravityRequester from '../AntigravityRequester.js';
 import { saveBase64Image } from '../utils/imageStorage.js';
 import logger from '../utils/logger.js';
-import memoryManager, { MemoryPressure } from '../utils/memoryManager.js';
-import { buildAxiosRequestConfig } from '../utils/httpClient.js';
+import memoryManager, { MemoryPressure, registerMemoryPoolCleanup } from '../utils/memoryManager.js';
+import { buildAxiosRequestConfig, httpRequest, httpStreamRequest } from '../utils/httpClient.js';
 import { MODEL_LIST_CACHE_TTL } from '../constants/index.js';
 import { createApiError, UpstreamApiError } from '../utils/errors.js';
 import {
@@ -14,8 +14,6 @@ import {
   convertToToolCall,
   registerStreamMemoryCleanup
 } from './stream_parser.js';
-import memoryManager, { MemoryPressure, registerMemoryPoolCleanup } from '../utils/memoryManager.js';
-import { buildAxiosRequestConfig, httpRequest, httpStreamRequest } from '../utils/httpClient.js';
 import { setReasoningSignature, setToolSignature } from '../utils/thoughtSignatureCache.js';
 import { getOriginalToolName } from '../utils/toolNameCache.js';
 
