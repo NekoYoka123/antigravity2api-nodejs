@@ -220,7 +220,8 @@ button.loading::after {
     box-shadow: 0 8px 32px rgba(0,0,0,0.2);
     width: 100%;
     max-width: 1400px;
-    height: calc(100vh - 1rem);
+    height: calc(100vh - 1rem); /* Fallback */
+    /* height: calc(100dvh - 1rem); */
     display: flex;
     flex-direction: column;
     border: 1px solid rgba(255, 255, 255, 0.5);
@@ -383,8 +384,7 @@ button.loading::after {
     align-items: start;
     flex: 1;
     overflow-y: auto;
-    padding-right: 4px;
-    padding-bottom: 0.5rem;
+    padding: 4px 8px 1rem 4px;
     min-height: 0;
 }
 .token-card {
@@ -394,7 +394,6 @@ button.loading::after {
     padding: 0.875rem;
     transition: all 0.2s;
     position: relative;
-    overflow: hidden;
 }
 @media (prefers-color-scheme: dark) {
     .token-card {
@@ -1259,10 +1258,10 @@ input:checked + .slider:before {
 
 /* 响应式 */
 @media (max-width: 768px) {
-    .container { padding: 0; height: 100vh; align-items: stretch; }
+    .container { padding: 0; height: 100vh; height: 100dvh; align-items: stretch; }
     .login-form { margin: auto 0.5rem; padding: 1.5rem; }
     .login-form h2 { font-size: 1.25rem; }
-    .main-content { height: 100vh; border-radius: 0; margin: 0; }
+    .main-content { height: 100vh; height: 100dvh; border-radius: 0; margin: 0; }
     .header {
         padding: 0.5rem 0.75rem;
         flex-wrap: nowrap;
